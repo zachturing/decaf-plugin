@@ -75,7 +75,7 @@ void stringsearch_cleanup()
 	}
 }
 
-int mem_callback(void *buf, int size, bool is_write)
+int mem_callback(void *buf, int size, bool is_write, int *pMatchLen)
 {  
 	//DECAF_printf("mem_callback.\n");
 	string_pos sp;   
@@ -100,8 +100,10 @@ int mem_callback(void *buf, int size, bool is_write)
                 //DECAF_printf("%s Match of str %s\n", (is_write ? "WRITE" : "READ"), tofind[str_idx]);                
                 fprintf(stringsearch_log, "%s Match of str %s\n", (is_write ? "WRITE" : "READ"), tofind[str_idx]);
                 fprintf(stringsearch_log, "addr:0x%x\n", (uint8_t*)buf + i - strlens[str_idx]);
+                *pMatchLen = strlens[str_idx];   //记录当前匹配的字符串的长度
+                fprintf(stringsearch_log, "match string len is %d.\n", *pMatchLen);
 
-                int index = 0;
+                int index = 1;
                 for(; index <= strlens[str_idx]; ++index)
                 {
                 	fprintf(stringsearch_log, "0x%x:%c\n", (char*)buf + i - strlens[str_idx] + index, *((char*)buf + i - strlens[str_idx] + index));
@@ -196,16 +198,16 @@ void do_mem_read_cb(DECAF_Callback_Params *param)
 	for(int i = 0; i < PROC_NUM; ++i)
 	{ 
 		if(strcmp(name, procname[i]) == 0)  //说明触发此回调函数的进程是我们所关注的进程
-		{  						
-			
+		{			
 			DECAF_read_mem_with_pgd(cpu_single_env, cr3, param->mr.vaddr, MAX_SEARCH_LEN, (void*)buf);
 			
-			int offset = mem_callback(buf, MAX_SEARCH_LEN, false);   //返回匹配的最后的一个字符的位置
+			int bytes_read = 0;
+			int offset = mem_callback(buf, MAX_SEARCH_LEN, false, &bytes_read);   //返回匹配的最后的一个字符的位置
 			if(offset != -1)
 			{
 				fprintf(stringsearch_log, "%s:\n", name);
-				fprintf(stringsearch_log, "proc name :%s   offset :%d\n", name, offset);
-				int bytes_read = STRING_LEN;
+				fprintf(stringsearch_log, "proc name :%s   offset :%d   tainted bytes :%d\n", name, offset + 1, bytes_read);   //因为下标从0开始，所以表示位置时要加1
+				
 				uint8_t* taint_flag= new uint8_t[bytes_read];
 				memset((void*)taint_flag, 0xff, bytes_read);
 				//打上污点标签  
@@ -249,15 +251,18 @@ void do_mem_write_cb(DECAF_Callback_Params *param)
 			
 			DECAF_read_mem_with_pgd(cpu_single_env, cr3, param->mr.vaddr, MAX_SEARCH_LEN, (void*)buf);
 			
-			int offset = mem_callback(buf, MAX_SEARCH_LEN, true);
+			int bytes_read = 0;
+			int offset = mem_callback(buf, MAX_SEARCH_LEN, true, &bytes_read);
 			if(offset != -1)
 			{
 				fprintf(stringsearch_log, "%s:\n", name);
-				fprintf(stringsearch_log, "proc name :%s   offset :%d\n", name, offset);
+				fprintf(stringsearch_log, "proc name :%s   offset :%d   tainted bytes :%d\n", name, offset + 1, bytes_read);
 				int bytes_read = STRING_LEN;
 				uint8_t* taint_flag= new uint8_t[bytes_read];
 				memset((void*)taint_flag, 0xff, bytes_read);
 				taintcheck_taint_virtmem(param->mr.vaddr + offset - STRING_LEN + 1, bytes_read, taint_flag);
+
+
 				//fprintf(stringsearch_log, "vaddr:0x%x\n", param->mr.vaddr);
 				//fprintf(stringsearch_log, "paddr:0x%x\n", param->mr.paddr);
 				fflush(stringsearch_log);
